@@ -87,6 +87,7 @@ def main(input_args=None):
     # MF
     co2_mf_file = f'{args.output_base}_co2_mf'
     ch4_mf_file = f'{args.output_base}_ch4_mf'
+    ch4_injected_mf_file = f'{args.output_base}_injected_ch4_mf'
 
     # MF - ORT
     co2_mf_ort_file = f'{args.output_base}_co2_mf_ort'
@@ -151,7 +152,8 @@ def main(input_args=None):
     print(ch4_mf_file)
     if os.path.isfile(ch4_mf_file) is False or args.overwrite:
         print('starting parallel mf')
-        subargs = [args.radiance_file, ch4_target_file, ch4_mf_file]
+        subargs = [args.radiance_file, ch4_target_file, ch4_mf_file, '--do_injection_CH4_npy_filename', '/beegfs/scratch/jfahlen/methane_absorption_spectrum_emit_1000ppmm.npy',
+                                                                     f'--do_injection_output_mf_filename', f'{ch4_injected_mf_file}']
         if args.ace_filter:
             subargs.append('--use_ace_filter')
         parallel_mf.main(subargs)

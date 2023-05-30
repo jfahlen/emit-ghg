@@ -53,6 +53,8 @@ def main(input_args=None):
     parser.add_argument('--threshold', type=float, default=None, help='Max-value threshold for connectivity and vis.')    
     parser.add_argument('--connectivity', type=int, default=None, help='Number of connected components for plume detection.')    
     parser.add_argument('--use_ace_filter', action='store_true', help='Use the Adaptive Cosine Estimator (ACE) Filter')    
+    parser.add_argument('--do_injection_CH4_npy_filename', type=str, default='None', help='Methane Absorption Spectrum to inject')    
+    parser.add_argument('--do_injection_output_mf_filename', type=str, default='None', help='Output for injected methane Absorption Spectrum')    
 
     parser.add_argument('radiance_file', type=str,  metavar='INPUT', help='path to input image')   
     parser.add_argument('library', type=str,  metavar='LIBRARY', help='path to target library file')
@@ -148,6 +150,19 @@ def main(input_args=None):
     assert((outimg_mm.shape[0]==nrows) & (outimg_mm.shape[1]==ncols))
     # Set values to nodata
     outimg_mm[...] = nodata
+
+    if args.do_injection_CH4_npy_filename is not 'None':
+        hitran_ch4_absorption_spectrum = np.load(args.do_injection_CH4_npy_filename)
+        hitran_ch4_absorption_spectrum = hitran_ch4_absorption_spectrum[active[0]-1:active[1]].copy()
+        baseoutfile_injected = args.do_injection_output_mf_filename 
+        baseoutfilehdr_injected = envi_header(baseoutfile_injected)
+        # Create output image
+        outimg_injected = envi.create_image(baseoutfilehdr_injected,outmeta,force=True,ext='')
+        outimg_injected_mm = outimg_injected.open_memmap(interleave='source',writable=True)
+        assert((outimg_injected_mm.shape[0]==nrows) & (outimg_injected_mm.shape[1]==ncols))
+        # Set values to nodata
+        outimg_injected_mm[...] = nodata
+        del outimg_injected_mm
     
     if args.metadata:
         # output image of bgster membership labels per column
@@ -179,14 +194,24 @@ def main(input_args=None):
     ray.init(**rayargs)
     img_mm_id = ray.put(img_mm.copy())
     abscf_id = ray.put(abscf)
+    
+    hitran_ch4_absorption_spectrum_id = None
+    if args.do_injection_CH4_npy_filename is not 'None':
+        hitran_ch4_absorption_spectrum_id = ray.put(hitran_ch4_absorption_spectrum)
 
-    jobs = [mf_one_column.remote(col,img_mm_id, bgminsamp, outimg_shp, bgimg_shp, abscf_id, args) for col in np.arange(ncols)]
+    jobs = [mf_one_column.remote(col,img_mm_id, bgminsamp, outimg_shp, bgimg_shp, abscf_id, args, hitran_ch4_absorption_spectrum_id) for col in np.arange(ncols)]
     
     rreturn = [ray.get(jid) for jid in jobs]
+
     outimg_mm = outimg.open_memmap(interleave='source',writable=True)
+    if args.do_injection_CH4_npy_filename is not 'None':
+        outimg_injected_mm = outimg_injected.open_memmap(interleave='source',writable=True)
+
     for ret in rreturn:
         if ret[0] is not None:
             outimg_mm[:, ret[2],-1] = np.squeeze(ret[0])
+            if args.do_injection_CH4_npy_filename is not 'None':
+                outimg_injected_mm[:, ret[2],-1] = np.squeeze(ret[3])
             if args.metadata:
                 bgimg_mm[:, ret[2] ,-1] = np.squeeze(ret[1])
 
@@ -317,7 +342,7 @@ def looshrinkage(I_zm,alphas,nll,n,I_reg=[]):
 
 
 @ray.remote
-def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf, args):
+def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf, args, hitran_ch4_absorption_spectrum):
 
 
     logging.basicConfig(format='%(levelname)s:%(asctime)s ||| %(message)s', level=args.loglevel,
@@ -355,6 +380,10 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
     use = np.where(np.all(np.logical_and(np.isfinite(Icol_full), Icol_full > -0.05), axis=1))[0]
     Icol = np.float64(Icol_full[use,:].copy())
     nuse = Icol.shape[0]
+
+    if hitran_ch4_absorption_spectrum is not None:
+        outimg_injected_mm = np.zeros((outimg_mm_shape))
+        Icol_injected = np.float64((Icol_full * hitran_ch4_absorption_spectrum)[use,:])
 
     if nuse == 0:
         return None, None, None
@@ -402,6 +431,8 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
 
         # need to recompute mu and associated vars wrt this cluster
         Icol_ki = (Icol if bgmodes == 1 else Icol[kmask,:]).copy()     
+        if hitran_ch4_absorption_spectrum is not None:
+            Icol_ki_injected = (Icol_injected if bgmodes == 1 else Icol_injected[kmask,:]).copy()     
         
         Icol_sub = Icol_ki.copy()
         mu = colavgfn(Icol_sub,axis=0)
@@ -430,6 +461,9 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
         except np.linalg.LinAlgError:
             logging.warn('singular matrix. skipping this column mode.')
             outimg_mm[use[kmask],0,-1] = 0
+            if hitran_ch4_absorption_spectrum is not None:
+                outimg_injected_mm[use[kmask],0,-1] = 0
+                return None, None, None, None
             return None, None, None
 
         # Classical matched filter
@@ -447,14 +481,33 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
 
         mf = (Icol_ki.dot(Cinv).dot(target.T)) / normalizer
 
+        if hitran_ch4_absorption_spectrum is not None:
+            Icol_ki_injected = Icol_ki_injected-mu # = fully-sampled column mode
+            normalizer_injected = normalizer
+            if use_ace_filter:
+                # Self Mahalanobis distance
+                rx_injected = np.sum(Icol_ki_injected @ Cinv * Icol_ki_injected, axis = 1)
+                # ACE filter normalization
+                #normalizer = np.sqrt(normalizer * rx)
+                normalizer_injected = normalizer * rx_injected
+            mf_injected = (Icol_ki_injected.dot(Cinv).dot(target.T)) / normalizer_injected
+
         if reflectance:
             outimg_mm[use[kmask],0,-1] = mf 
+            if hitran_ch4_absorption_spectrum is not None:
+                outimg_injected_mm[use[kmask],0,-1] = mf_injected
         else:
             outimg_mm[use[kmask],0,-1] = mf*ppmscaling
+            if hitran_ch4_absorption_spectrum is not None:
+                outimg_injected_mm[use[kmask],0,-1] = mf_injected * ppmscaling
 
     colmu = outimg_mm[use[bglabels>=0],0,-1].mean()
     logging.debug('Column %i mean: %e'%(col,colmu))
-    return outimg_mm, bgimg_mm, col
+
+    if hitran_ch4_absorption_spectrum is None:
+        return outimg_mm, bgimg_mm, col
+    else:
+        return outimg_mm, bgimg_mm, col, outimg_injected_mm
 
 
 
