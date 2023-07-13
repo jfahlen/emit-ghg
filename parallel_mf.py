@@ -55,6 +55,8 @@ def main(input_args=None):
     parser.add_argument('--use_ace_filter', action='store_true', help='Use the Adaptive Cosine Estimator (ACE) Filter')    
     parser.add_argument('--do_injection_CH4_npy_filename', type=str, default='None', help='Methane Absorption Spectrum to inject')    
     parser.add_argument('--do_injection_output_mf_filename', type=str, default='None', help='Output for injected methane Absorption Spectrum')    
+    parser.add_argument('--do_injection_output_mf_before_sum_filename', type=str, default='None', help='Output for methane matched filter before summation')    
+    parser.add_argument('--output_mf_before_sum_filename', type=str, default='None', help='Output for methane matched filter before summation')    
 
     parser.add_argument('radiance_file', type=str,  metavar='INPUT', help='path to input image')   
     parser.add_argument('library', type=str,  metavar='LIBRARY', help='path to target library file')
@@ -87,7 +89,9 @@ def main(input_args=None):
         sys.exit(0)
     wavelengths = np.array([float(x) for x in img.metadata['wavelength']])
     if 'ch4' in args.library:
-        active = [np.argmin(np.abs(wavelengths - x)) for x in CH4_WL]
+        #active = [np.argmin(np.abs(wavelengths - x)) for x in CH4_WL]
+        # baseline_2nd_region_3ch'
+        active = [75, 85, 100, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283]
         logging.debug(f'CH4 active chanels: {active}')
     elif 'co2' in args.library:
         active = [np.argmin(np.abs(wavelengths - x)) for x in CO2_WL]
@@ -96,14 +100,17 @@ def main(input_args=None):
         logging.error('could not set active range - neither co2 nor ch4 found in library name')
         sys.exit(0)
 
-    img_mm = img.open_memmap(interleave='source',writeable=False)[:,active[0]-1:active[1],:]
+    img_mm = img.open_memmap(interleave='source',writeable=False)[:,active,:]
+    #img_mm = img.open_memmap(interleave='source',writeable=False)[:,active[0]-1:active[1],:]
 
     # load the gas spectrum
     libdata = np.float64(np.loadtxt(args.library))
-    abscf=libdata[active[0]-1:active[1],2]
+    abscf=libdata[active,2]
+    #abscf=libdata[active[0]-1:active[1],2]
 
     # want bg modes to have at least as many samples as 120% x (# features)
-    bgminsamp = int((active[1]-active[0])*1.2)
+    #bgminsamp = int((active[1]-active[0])*1.2)
+    bgminsamp = int(len(active)*1.2)
     bgmodel = 'unimodal' if args.kmodes==1 else 'multimodal'
     
     # alphas for leave-one-out cross validation shrinkage
@@ -153,7 +160,8 @@ def main(input_args=None):
 
     if args.do_injection_CH4_npy_filename is not 'None':
         hitran_ch4_absorption_spectrum = np.load(args.do_injection_CH4_npy_filename)
-        hitran_ch4_absorption_spectrum = hitran_ch4_absorption_spectrum[active[0]-1:active[1]].copy()
+        #hitran_ch4_absorption_spectrum = hitran_ch4_absorption_spectrum[active[0]-1:active[1]].copy()
+        hitran_ch4_absorption_spectrum = hitran_ch4_absorption_spectrum[active].copy()
         baseoutfile_injected = args.do_injection_output_mf_filename 
         baseoutfilehdr_injected = envi_header(baseoutfile_injected)
         # Create output image
@@ -176,6 +184,34 @@ def main(input_args=None):
         bgmeta['band names'] = '{cluster_count, alpha_index}'
         bgimg = envi.create_image(bgfilehdr,bgmeta,force=True,ext='')
         bgimg_mm = bgimg.open_memmap(interleave='source',writable=True)
+
+
+    outmeta['bands'] = img_mm.shape[1]
+
+    baseoutfile_before_sum = args.output_mf_before_sum_filename
+    baseoutfilehdr_before_sum = envi_header(baseoutfile_before_sum)
+    # Create output image
+    outimg_before_sum = envi.create_image(baseoutfilehdr_before_sum,outmeta,force=True,ext='')
+    outimg_before_sum_mm = outimg_before_sum.open_memmap(interleave='source',writable=True)
+    assert((outimg_before_sum_mm.shape[0]==nrows) & (outimg_before_sum_mm.shape[1]==ncols) & (outimg_before_sum_mm.shape[2]==img_mm.shape[1]))
+    # Set values to nodata
+    outimg_before_sum_mm[...] = nodata
+    del outimg_before_sum_mm
+
+    baseoutfile_injected_before_sum = args.do_injection_output_mf_before_sum_filename
+    baseoutfilehdr_injected_before_sum = envi_header(baseoutfile_injected_before_sum)
+    # Create output image
+    outimg_injected_before_sum = envi.create_image(baseoutfilehdr_injected_before_sum,outmeta,force=True,ext='')
+    outimg_injected_before_sum_mm = outimg_injected_before_sum.open_memmap(interleave='source',writable=True)
+    assert((outimg_injected_before_sum_mm.shape[0]==nrows) & (outimg_injected_before_sum_mm.shape[1]==ncols) & (outimg_injected_before_sum_mm.shape[2]==img_mm.shape[1]))
+    # Set values to nodata
+    outimg_injected_before_sum_mm[...] = nodata
+    del outimg_injected_before_sum_mm
+
+
+
+
+
 
     outimg_shp = (outimg_mm.shape[0],1,outimg_mm.shape[2])
     bgimg_shp = None
@@ -206,12 +242,16 @@ def main(input_args=None):
     outimg_mm = outimg.open_memmap(interleave='source',writable=True)
     if args.do_injection_CH4_npy_filename is not 'None':
         outimg_injected_mm = outimg_injected.open_memmap(interleave='source',writable=True)
+        outimg_before_sum_mm = outimg_before_sum.open_memmap(interleave='source',writable=True)
+        outimg_injected_before_sum_mm = outimg_injected_before_sum.open_memmap(interleave='source',writable=True)
 
     for ret in rreturn:
         if ret[0] is not None:
             outimg_mm[:, ret[2],-1] = np.squeeze(ret[0])
             if args.do_injection_CH4_npy_filename is not 'None':
                 outimg_injected_mm[:, ret[2],-1] = np.squeeze(ret[3])
+                outimg_before_sum_mm[:, ret[2],:] = np.squeeze(ret[4][:, np.newaxis, :])
+                outimg_injected_before_sum_mm[:, ret[2],:] = np.squeeze(ret[5][:, np.newaxis, :])
             if args.metadata:
                 bgimg_mm[:, ret[2] ,-1] = np.squeeze(ret[1])
 
@@ -383,6 +423,8 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
 
     if hitran_ch4_absorption_spectrum is not None:
         outimg_injected_mm = np.zeros((outimg_mm_shape))
+        outimg_before_sum_mm = np.zeros((Icol_full.shape))
+        outimg_injected_before_sum_mm = np.zeros((Icol_full.shape))
         Icol_injected = np.float64((Icol_full * hitran_ch4_absorption_spectrum)[use,:])
 
     if nuse == 0:
@@ -463,6 +505,8 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
             outimg_mm[use[kmask],0,-1] = 0
             if hitran_ch4_absorption_spectrum is not None:
                 outimg_injected_mm[use[kmask],0,-1] = 0
+                outimg_before_sum_mm[use[kmask],:,-1] = 0
+                outimg_injected_before_sum_mm[use[kmask],:,-1] = 0
                 return None, None, None, None
             return None, None, None
 
@@ -479,7 +523,9 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
             #normalizer = np.sqrt(normalizer * rx)
             normalizer = normalizer * rx
 
-        mf = (Icol_ki.dot(Cinv).dot(target.T)) / normalizer
+        mf_before_sum = (Icol_ki.dot(Cinv) * target.T) / normalizer
+        mf = np.sum(mf_before_sum, axis = 1)
+        #mf = (Icol_ki.dot(Cinv).dot(target.T)) / normalizer
 
         if hitran_ch4_absorption_spectrum is not None:
             Icol_ki_injected = Icol_ki_injected-mu # = fully-sampled column mode
@@ -490,16 +536,22 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
                 # ACE filter normalization
                 #normalizer = np.sqrt(normalizer * rx)
                 normalizer_injected = normalizer * rx_injected
-            mf_injected = (Icol_ki_injected.dot(Cinv).dot(target.T)) / normalizer_injected
+
+            mf_injected_before_sum = (Icol_ki_injected.dot(Cinv) * target.T) / normalizer_injected
+            mf_injected = np.sum(mf_injected_before_sum, axis = 1)
 
         if reflectance:
             outimg_mm[use[kmask],0,-1] = mf 
             if hitran_ch4_absorption_spectrum is not None:
                 outimg_injected_mm[use[kmask],0,-1] = mf_injected
+                outimg_before_sum_mm[use[kmask],:] = mf_before_sum
+                outimg_injected_before_sum_mm[use[kmask],:] = mf_injected_before_sum
         else:
             outimg_mm[use[kmask],0,-1] = mf*ppmscaling
             if hitran_ch4_absorption_spectrum is not None:
                 outimg_injected_mm[use[kmask],0,-1] = mf_injected * ppmscaling
+                outimg_before_sum_mm[use[kmask],:] = mf_before_sum * ppmscaling
+                outimg_injected_before_sum_mm[use[kmask],:] = mf_injected_before_sum * ppmscaling
 
     colmu = outimg_mm[use[bglabels>=0],0,-1].mean()
     logging.debug('Column %i mean: %e'%(col,colmu))
@@ -507,7 +559,7 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
     if hitran_ch4_absorption_spectrum is None:
         return outimg_mm, bgimg_mm, col
     else:
-        return outimg_mm, bgimg_mm, col, outimg_injected_mm
+        return outimg_mm, bgimg_mm, col, outimg_injected_mm, outimg_before_sum_mm, outimg_injected_before_sum_mm
 
 
 
