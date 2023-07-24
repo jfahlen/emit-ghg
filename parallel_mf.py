@@ -90,8 +90,16 @@ def main(input_args=None):
     wavelengths = np.array([float(x) for x in img.metadata['wavelength']])
     if 'ch4' in args.library:
         #active = [np.argmin(np.abs(wavelengths - x)) for x in CH4_WL]
+        
+        # Baseline
+        active = [235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283]
+
         # baseline_2nd_region_3ch'
-        active = [75, 85, 100, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283]
+        #active = [75, 85, 100, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283]
+
+        # All except OSF boundary at 115-130
+        #active = list(np.arange(115)) + list(np.arange(285-130)+130)
+
         logging.debug(f'CH4 active chanels: {active}')
     elif 'co2' in args.library:
         active = [np.argmin(np.abs(wavelengths - x)) for x in CO2_WL]
@@ -523,8 +531,8 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
             #normalizer = np.sqrt(normalizer * rx)
             normalizer = normalizer * rx
 
-        mf_before_sum = (Icol_ki.dot(Cinv) * target.T) / normalizer
-        mf = np.sum(mf_before_sum, axis = 1)
+        mf_before_sum = (Icol_ki.dot(Cinv)) / normalizer
+        mf = np.sum(mf_before_sum * target.T, axis = 1)
         #mf = (Icol_ki.dot(Cinv).dot(target.T)) / normalizer
 
         if hitran_ch4_absorption_spectrum is not None:
@@ -537,8 +545,8 @@ def mf_one_column(col, img_mm, bgminsamp, outimg_mm_shape, bgimg_mm_shape, abscf
                 #normalizer = np.sqrt(normalizer * rx)
                 normalizer_injected = normalizer * rx_injected
 
-            mf_injected_before_sum = (Icol_ki_injected.dot(Cinv) * target.T) / normalizer_injected
-            mf_injected = np.sum(mf_injected_before_sum, axis = 1)
+            mf_injected_before_sum = (Icol_ki_injected.dot(Cinv)) / normalizer_injected
+            mf_injected = np.sum(mf_injected_before_sum * target.T, axis = 1)
 
         if reflectance:
             outimg_mm[use[kmask],0,-1] = mf 
