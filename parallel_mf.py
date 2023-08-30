@@ -69,6 +69,10 @@ def main(input_args=None):
     parser.add_argument('--flare_outfile', type=str, default=None, help='output geojson to write flare location centers')         
     parser.add_argument('--loglevel', type=str, default='DEBUG', help='logging verbosity')    
     parser.add_argument('--logfile', type=str, default=None, help='output file to write log to')         
+    parser.add_argument('--do_injection_CH4_npy_filename', type=str, default='None', help='Methane Absorption Spectrum to inject')    
+    parser.add_argument('--do_injection_output_mf_filename', type=str, default='None', help='Output for injected methane Absorption Spectrum')    
+    parser.add_argument('--do_injection_output_mf_before_sum_filename', type=str, default='None', help='Output for methane matched filter before summation')    
+    parser.add_argument('--output_mf_before_sum_filename', type=str, default='None', help='Output for methane matched filter before summation')    
     args = parser.parse_args(input_args)
 
     #Set up logging
@@ -167,37 +171,91 @@ def main(input_args=None):
     output_shape = (int(outmeta['lines']),int(outmeta['bands']),int(outmeta['samples']))
     write_bil_chunk(np.ones(output_shape)*args.nodata_value, args.output_file, 0, output_shape)
 
+    if args.do_injection_CH4_npy_filename is not 'None':
+        hitran_ch4_absorption_spectrum = np.load(args.do_injection_CH4_npy_filename)
+
+        baseoutfile_injected = args.do_injection_output_mf_filename 
+        # Create output image
+        outimg_injected = envi.create_image(envi_header(baseoutfile_injected), outmeta,force=True,ext='')
+        del outimg_injected
+        #outimg_injected_mm = outimg_injected.open_memmap(interleave='source',writable=True)
+        #assert((outimg_injected_mm.shape[0]==nrows) & (outimg_injected_mm.shape[1]==ncols))
+        # Set values to nodata
+        #outimg_injected_mm[...] = nodata
+
+    outmeta['bands'] = len(active_wl_idx)
+    baseoutfile_before_sum = args.output_mf_before_sum_filename
+    outimg_before_sum = envi.create_image(envi_header(baseoutfile_before_sum), outmeta,force=True,ext='')
+    del outimg_before_sum
+
+    baseoutfile_injected_before_sum = args.do_injection_output_mf_before_sum_filename
+    outimg_injected_before_sum = envi.create_image(envi_header(baseoutfile_injected_before_sum), outmeta,force=True,ext='')
+    del outimg_injected_before_sum
+    outmeta['bands'] = 1
+
+    hitran_ch4_absorption_spectrum_id = None
+    if args.do_injection_CH4_npy_filename is not 'None':
+        hitran_ch4_absorption_spectrum_id = ray.put(hitran_ch4_absorption_spectrum)
+
     logging.info('Run jobs')
-    jobs = [mf_one_column.remote(col, rdn_id, absorption_coefficients_id, active_wl_idx, good_pixel_mask, args) for col in range(output_shape[2])]
+    jobs = [mf_one_column.remote(col, rdn_id, absorption_coefficients_id, active_wl_idx, good_pixel_mask, hitran_ch4_absorption_spectrum_id, args) for col in range(output_shape[2])]
     rreturn = [ray.get(jid) for jid in jobs]
 
     logging.info('Collecting and writing output')
     output_dat = np.zeros(output_shape,dtype=np.float32)
+    output_injected_mf = np.zeros((int(outmeta['lines']),int(outmeta['bands']),int(outmeta['samples'])), dtype=np.float32)
+    output_before_sum = np.zeros((int(outmeta['lines']),len(active_wl_idx),int(outmeta['samples'])), dtype=np.float32)
+    output_injected_before_sum = np.zeros((int(outmeta['lines']),len(active_wl_idx),int(outmeta['samples'])), dtype=np.float32)
     for ret in rreturn:
         if ret[0] is not None:
             output_dat[:, 0, ret[1]] = ret[0][:,0]
+
+            if args.do_injection_CH4_npy_filename is not 'None':
+                    output_injected_mf[:, 0, ret[1]] = np.squeeze(ret[2])
+                    output_before_sum[:, :, ret[1]] = np.squeeze(ret[3][:, np.newaxis, :])
+                    output_injected_before_sum[:, :, ret[1]] = np.squeeze(ret[4][:, np.newaxis, :])
     
+    def apply_nodata(x, mask, nodata_value):
+        x = x.transpose((0,2,1))
+        x[mask,:] = 0
+        return x.transpose((0,2,1))
+
     if args.mask_clouds_water and clouds_and_surface_water_mask is not None:
         logging.info('Masking clouds and water')
         output_dat = output_dat.transpose((0,2,1))
         output_dat[clouds_and_surface_water_mask,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
         output_dat = output_dat.transpose((0,2,1))
+        if args.do_injection_CH4_npy_filename is not 'None':
+            output_injected_mf = apply_nodata(output_injected_mf, clouds_and_surface_water_mask, 0)
+            output_before_sum = apply_nodata(output_before_sum, clouds_and_surface_water_mask, 0)
+            output_injected_before_sum = apply_nodata(output_injected_before_sum, clouds_and_surface_water_mask, 0)
 
     if args.mask_saturation and saturation is not None:
         logging.info('Masking saturation')
         output_dat = output_dat.transpose((0,2,1))
         output_dat[saturation,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
         output_dat = output_dat.transpose((0,2,1))
+        if args.do_injection_CH4_npy_filename is not 'None':
+            output_injected_mf = apply_nodata(output_injected_mf, saturation, 0)
+            output_before_sum = apply_nodata(output_before_sum, saturation, 0)
+            output_injected_before_sum = apply_nodata(output_injected_before_sum, saturation, 0)
 
     if args.mask_flares and saturation is not None:
         logging.info('Masking saturation')
         output_dat = output_dat.transpose((0,2,1))
-        output_dat[dilated_saturation,:] = -1 # could be nodata, but setting to 0 keeps maps continuous
-        output_dat[dilated_flare_mask,:] = -1 # could be nodata, but setting to 0 keeps maps continuous
+        output_dat[dilated_flare_mask,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
         output_dat = output_dat.transpose((0,2,1))
+        if args.do_injection_CH4_npy_filename is not 'None':
+            output_injected_mf = apply_nodata(output_injected_mf, dilated_flare_mask, 0)
+            output_before_sum = apply_nodata(output_before_sum, dilated_flare_mask, 0)
+            output_injected_before_sum = apply_nodata(output_injected_before_sum, dilated_flare_mask, 0)
 
 
     write_bil_chunk(output_dat, args.output_file, 0, output_shape)
+    if args.do_injection_CH4_npy_filename is not 'None':
+        write_bil_chunk(output_injected_mf, args.do_injection_output_mf_filename, 0, output_injected_mf.shape)
+        write_bil_chunk(output_before_sum, args.output_mf_before_sum_filename, 0, output_before_sum.shape)
+        write_bil_chunk(output_injected_before_sum, args.do_injection_output_mf_before_sum_filename, 0, output_before_sum.shape)
     logging.info('Complete')
 
 
@@ -361,7 +419,7 @@ def calculate_flare_mask(radiance: np.array, preflagged_pixels: np.array, wavele
 
 
 @ray.remote
-def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.array, active_wl_idx: np.array, good_pixel_mask: np.array, args):
+def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.array, active_wl_idx: np.array, good_pixel_mask: np.array, hitran_ch4_absorption_spectrum: np.array, args):
     """ Run the matched filter on a single column of the input image
 
     Args:
@@ -388,8 +446,19 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
         logging.debug('Too few good pixels found in col {col}: skipping')
         return None, None
     
+    hitran_ch4_absorption_spectrum = hitran_ch4_absorption_spectrum[active_wl_idx]
+
     # array to hold results in
     mf_mc = np.ones((rdn.shape[0],args.n_mc)) * args.nodata_value
+
+    if args.n_mc != 1:
+        raise ValueError('This injection code only works for n_mc == 1!')
+
+    if hitran_ch4_absorption_spectrum is not None:
+        injected_mf = np.ones((rdn.shape[0])) * args.nodata_value
+        before_sum = np.ones((rdn.shape[0], rdn.shape[1])) * args.nodata_value
+        injected_before_sum = np.ones((rdn.shape[0], rdn.shape[1])) * args.nodata_value
+        rdn_injected = rdn * hitran_ch4_absorption_spectrum
 
     np.random.seed(13)
     for _mc in range(args.n_mc):
@@ -422,16 +491,28 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
             rx = np.sum((loc_rdn[no_radiance_mask,:] - mu) @ Cinv * (loc_rdn[no_radiance_mask,:] - mu), axis = 1)
             normalizer = normalizer * rx
 
-        mf = ((loc_rdn[no_radiance_mask,:] - mu).dot(Cinv).dot(target.T)) / normalizer
+        #mf = ((loc_rdn[no_radiance_mask,:] - mu).dot(Cinv).dot(target.T)) / normalizer
+        mf_before_sum = ((loc_rdn[no_radiance_mask, :] - mu).dot(Cinv)) / normalizer
+        mf = np.sum(mf_before_sum * target.T, axis = 1)
+
+        if hitran_ch4_absorption_spectrum is not None:
+            normalizer_injected = normalizer
+
+            mf_injected_before_sum = ((rdn_injected[no_radiance_mask,:] - mu).dot(Cinv)) / normalizer_injected
+            mf_injected = np.sum(mf_injected_before_sum * target.T, axis = 1)
         
         # scale outputs
         mf_mc[no_radiance_mask,_mc] = mf * args.ppm_scaling
+
+        injected_mf[no_radiance_mask] = mf_injected * args.ppm_scaling
+        before_sum[no_radiance_mask, :] = mf_before_sum * args.ppm_scaling
+        injected_before_sum[no_radiance_mask, :] = mf_injected_before_sum * args.ppm_scaling
     
     output = np.vstack([np.mean(mf_mc,axis=-1), np.std(mf_mc,axis=-1)]).T
     output[np.logical_not(no_radiance_mask),:] = args.nodata_value
 
     logging.debug(f'Column {col} mean: {np.mean(output[good_pixel_idx,0])}')
-    return output.astype(np.float32), col
+    return output.astype(np.float32), col, injected_mf, before_sum, injected_before_sum
 
 
 if __name__ == '__main__':
