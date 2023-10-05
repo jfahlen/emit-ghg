@@ -173,6 +173,9 @@ def main(input_args=None):
 
     if args.do_injection_CH4_npy_filename is not 'None':
         hitran_ch4_absorption_spectrum = np.load(args.do_injection_CH4_npy_filename)
+        injection_absorption_spectrum = hitran_ch4_absorption_spectrum
+
+        injection_absorption_spectrum = absorption_coefficients/100 + 1 # 1000 ppm m
 
         baseoutfile_injected = args.do_injection_output_mf_filename 
         # Create output image
@@ -193,12 +196,12 @@ def main(input_args=None):
     del outimg_injected_before_sum
     outmeta['bands'] = 1
 
-    hitran_ch4_absorption_spectrum_id = None
+    injection_absorption_spectrum_id = None
     if args.do_injection_CH4_npy_filename is not 'None':
-        hitran_ch4_absorption_spectrum_id = ray.put(hitran_ch4_absorption_spectrum)
+        injection_absorption_spectrum_id = ray.put(injection_absorption_spectrum)
 
     logging.info('Run jobs')
-    jobs = [mf_one_column.remote(col, rdn_id, absorption_coefficients_id, active_wl_idx, good_pixel_mask, hitran_ch4_absorption_spectrum_id, args) for col in range(output_shape[2])]
+    jobs = [mf_one_column.remote(col, rdn_id, absorption_coefficients_id, active_wl_idx, good_pixel_mask, injection_absorption_spectrum_id, args) for col in range(output_shape[2])]
     rreturn = [ray.get(jid) for jid in jobs]
 
     logging.info('Collecting and writing output')
@@ -419,7 +422,7 @@ def calculate_flare_mask(radiance: np.array, preflagged_pixels: np.array, wavele
 
 
 @ray.remote
-def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.array, active_wl_idx: np.array, good_pixel_mask: np.array, hitran_ch4_absorption_spectrum: np.array, args):
+def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.array, active_wl_idx: np.array, good_pixel_mask: np.array, injection_absorption_spectrum: np.array, args):
     """ Run the matched filter on a single column of the input image
 
     Args:
@@ -446,7 +449,7 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
         logging.debug('Too few good pixels found in col {col}: skipping')
         return None, None
     
-    hitran_ch4_absorption_spectrum = hitran_ch4_absorption_spectrum[active_wl_idx]
+    injection_absorption_spectrum = injection_absorption_spectrum[active_wl_idx]
 
     # array to hold results in
     mf_mc = np.ones((rdn.shape[0],args.n_mc)) * args.nodata_value
@@ -454,11 +457,11 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
     if args.n_mc != 1:
         raise ValueError('This injection code only works for n_mc == 1!')
 
-    if hitran_ch4_absorption_spectrum is not None:
+    if injection_absorption_spectrum is not None:
         injected_mf = np.ones((rdn.shape[0])) * args.nodata_value
         before_sum = np.ones((rdn.shape[0], rdn.shape[1])) * args.nodata_value
         injected_before_sum = np.ones((rdn.shape[0], rdn.shape[1])) * args.nodata_value
-        rdn_injected = rdn * hitran_ch4_absorption_spectrum
+        rdn_injected = rdn * injection_absorption_spectrum
 
     np.random.seed(13)
     for _mc in range(args.n_mc):
@@ -495,7 +498,7 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
         mf_before_sum = ((loc_rdn[no_radiance_mask, :] - mu).dot(Cinv)) / normalizer
         mf = np.sum(mf_before_sum * target.T, axis = 1)
 
-        if hitran_ch4_absorption_spectrum is not None:
+        if injection_absorption_spectrum is not None:
             normalizer_injected = normalizer
 
             mf_injected_before_sum = ((rdn_injected[no_radiance_mask,:] - mu).dot(Cinv)) / normalizer_injected
