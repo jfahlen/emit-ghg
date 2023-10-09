@@ -152,7 +152,6 @@ def main(input_args=None):
     ray.init(**rayargs)
     rdn_id = ray.put(radiance)
     absorption_coefficients_id = ray.put(absorption_coefficients)
-    del radiance, absorption_coefficients
 
     logging.info('Create output file, initialized with nodata')
     outmeta = ds.metadata
@@ -175,7 +174,7 @@ def main(input_args=None):
         hitran_ch4_absorption_spectrum = np.load(args.do_injection_CH4_npy_filename)
         injection_absorption_spectrum = hitran_ch4_absorption_spectrum
 
-        injection_absorption_spectrum = absorption_coefficients/100 + 1 # 1000 ppm m
+        injection_absorption_spectrum = library_reference[:,2]/100 + 1 # 1000 ppm m
 
         baseoutfile_injected = args.do_injection_output_mf_filename 
         # Create output image
@@ -185,6 +184,8 @@ def main(input_args=None):
         #assert((outimg_injected_mm.shape[0]==nrows) & (outimg_injected_mm.shape[1]==ncols))
         # Set values to nodata
         #outimg_injected_mm[...] = nodata
+
+    del radiance, absorption_coefficients
 
     outmeta['bands'] = len(active_wl_idx)
     baseoutfile_before_sum = args.output_mf_before_sum_filename
