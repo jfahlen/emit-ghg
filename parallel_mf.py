@@ -265,7 +265,8 @@ def main(input_args=None):
         output_dat = apply_badvalue(output_dat, dilated_flare_mask, -1)
         output_uncert_dat = apply_badvalue(output_uncert_dat, dilated_flare_mask, -1)
         if args.do_l_hat_slope_filename is not 'None':
-            l_hat_slope = apply_badvalue(l_hat_slope, clouds_and_surface_water_mask, 0)
+            l_hat_slope = apply_badvalue(l_hat_slope, dilated_saturation, 0)
+            l_hat_slope = apply_badvalue(l_hat_slope, dilated_flare_mask, 0)
 
     write_bil_chunk(output_dat, args.output_file, 0, output_shape)
     write_bil_chunk(output_uncert_dat, args.uncert_output_file, 0, output_shape)
