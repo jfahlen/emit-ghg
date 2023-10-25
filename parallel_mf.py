@@ -47,6 +47,7 @@ def main(input_args=None):
     parser.add_argument('radiance_file', type=str,  metavar='INPUT', help='path to input image')   
     parser.add_argument('library', type=str,  metavar='LIBRARY', help='path to target library file')
     parser.add_argument('output_file', type=str,  metavar='OUTPUT', help='path for output image (mf ch4 ppm)')    
+    parser.add_argument('uncert_output_file', type=str,  metavar='OUTPUT', help='path for uncertainty output image (mf ch4 ppm)')    
 
     parser.add_argument('--covariance_style', type=str, default='looshrinkage', choices=['empirical', 'looshrinkage'], help='style of covariance estimation') 
     parser.add_argument('--fixed_alpha', type=float, default=None, help='fixed value for shrinkage (with looshrinkage covariance style only)')    
@@ -168,8 +169,11 @@ def main(input_args=None):
 
     output_ds = envi.create_image(envi_header(args.output_file),outmeta,force=True,ext='')
     del output_ds
+    output_ds = envi.create_image(envi_header(args.uncert_output_file),outmeta,force=True,ext='')
+    del output_ds
     output_shape = (int(outmeta['lines']),int(outmeta['bands']),int(outmeta['samples']))
     write_bil_chunk(np.ones(output_shape)*args.nodata_value, args.output_file, 0, output_shape)
+    write_bil_chunk(np.ones(output_shape)*args.nodata_value, args.uncert_output_file, 0, output_shape)
 
     if args.do_l_hat_slope_filename is not 'None':
         hitran_ch4_absorption_spectrum = np.load(args.do_injection_CH4_npy_filename)
@@ -212,52 +216,59 @@ def main(input_args=None):
     l_hat_slope = np.zeros((int(outmeta['lines']),int(outmeta['bands']),int(outmeta['samples'])), dtype=np.float32)
     #output_before_sum = np.zeros((int(outmeta['lines']),len(active_wl_idx),int(outmeta['samples'])), dtype=np.float32)
     #output_injected_before_sum = np.zeros((int(outmeta['lines']),len(active_wl_idx),int(outmeta['samples'])), dtype=np.float32)
+    output_uncert_dat = np.zeros(output_shape,dtype=np.float32)
     for ret in rreturn:
         if ret[0] is not None:
             output_dat[:, 0, ret[1]] = ret[0][:,0]
-
+            output_uncert_dat[:, 0, ret[1]] = ret[2][:]
             if args.do_l_hat_slope_filename is not 'None':
-                    l_hat_slope[:, 0, ret[1]] = np.squeeze(ret[2])
+                    l_hat_slope[:, 0, ret[1]] = np.squeeze(ret[3])
                     #output_before_sum[:, :, ret[1]] = np.squeeze(ret[3][:, np.newaxis, :])
-                    #output_injected_before_sum[:, :, ret[1]] = np.squeeze(ret[4][:, np.newaxis, :])
-    
-    def apply_nodata(x, mask, nodata_value):
-        x = x.transpose((0,2,1))
-        x[mask,:] = 0
-        return x.transpose((0,2,1))
+                    #output_injected_before_sum[:, :, ret[1]] = np.squeeze(ret[4][:, np.newaxis, :])    
+
+    def apply_badvalue(d, mask, bad_data_value):
+        d = d.transpose((0,2,1))
+        d[mask,:] = bad_data_value # could be nodata, but setting to 0 keeps maps continuous
+        d = d.transpose((0,2,1))
+        return d
 
     if args.mask_clouds_water and clouds_and_surface_water_mask is not None:
         logging.info('Masking clouds and water')
-        output_dat = output_dat.transpose((0,2,1))
-        output_dat[clouds_and_surface_water_mask,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
-        output_dat = output_dat.transpose((0,2,1))
+        #output_dat = output_dat.transpose((0,2,1))
+        #output_dat[clouds_and_surface_water_mask,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
+        #output_dat = output_dat.transpose((0,2,1))
+        output_dat = apply_badvalue(output_dat, clouds_and_surface_water_mask, 0)
+        output_uncert_dat = apply_badvalue(output_uncert_dat, clouds_and_surface_water_mask, 0)
         if args.do_l_hat_slope_filename is not 'None':
-            l_hat_slope = apply_nodata(l_hat_slope, clouds_and_surface_water_mask, 0)
-            #output_before_sum = apply_nodata(output_before_sum, clouds_and_surface_water_mask, 0)
-            #output_injected_before_sum = apply_nodata(output_injected_before_sum, clouds_and_surface_water_mask, 0)
+            l_hat_slope = apply_badvalue(l_hat_slope, clouds_and_surface_water_mask, 0)
 
     if args.mask_saturation and saturation is not None:
         logging.info('Masking saturation')
-        output_dat = output_dat.transpose((0,2,1))
-        output_dat[saturation,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
-        output_dat = output_dat.transpose((0,2,1))
+        #output_dat = output_dat.transpose((0,2,1))
+        #output_dat[saturation,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
+        #output_dat = output_dat.transpose((0,2,1))
+        output_dat = apply_badvalue(output_dat, saturation, 0)
+        output_uncert_dat = apply_badvalue(output_uncert_dat, saturation, 0)
         if args.do_l_hat_slope_filename is not 'None':
-            l_hat_slope = apply_nodata(l_hat_slope, saturation, 0)
+            l_hat_slope = apply_badvalue(l_hat_slope, saturation, 0)
             #output_before_sum = apply_nodata(output_before_sum, saturation, 0)
             #output_injected_before_sum = apply_nodata(output_injected_before_sum, saturation, 0)
 
     if args.mask_flares and saturation is not None:
         logging.info('Masking saturation')
-        output_dat = output_dat.transpose((0,2,1))
-        output_dat[dilated_flare_mask,:] = 0 # could be nodata, but setting to 0 keeps maps continuous
-        output_dat = output_dat.transpose((0,2,1))
+        #output_dat = output_dat.transpose((0,2,1))
+        #output_dat[dilated_saturation,:] = -1 # could be nodata, but setting to 0 keeps maps continuous
+        #output_dat[dilated_flare_mask,:] = -1 # could be nodata, but setting to 0 keeps maps continuous
+        #output_dat = output_dat.transpose((0,2,1))
+        output_dat = apply_badvalue(output_dat, dilated_saturation, -1)
+        output_uncert_dat = apply_badvalue(output_uncert_dat, dilated_saturation, -1)
+        output_dat = apply_badvalue(output_dat, dilated_flare_mask, -1)
+        output_uncert_dat = apply_badvalue(output_uncert_dat, dilated_flare_mask, -1)
         if args.do_l_hat_slope_filename is not 'None':
-            l_hat_slope = apply_nodata(l_hat_slope, dilated_flare_mask, 0)
-            #output_before_sum = apply_nodata(output_before_sum, dilated_flare_mask, 0)
-            #output_injected_before_sum = apply_nodata(output_injected_before_sum, dilated_flare_mask, 0)
-
+            l_hat_slope = apply_badvalue(l_hat_slope, clouds_and_surface_water_mask, 0)
 
     write_bil_chunk(output_dat, args.output_file, 0, output_shape)
+    write_bil_chunk(output_uncert_dat, args.uncert_output_file, 0, output_shape)
     if args.do_l_hat_slope_filename is not 'None':
         write_bil_chunk(l_hat_slope, args.do_l_hat_slope_filename, 0, l_hat_slope.shape)
         #write_bil_chunk(output_before_sum, args.output_mf_before_sum_filename, 0, output_before_sum.shape)
@@ -456,12 +467,13 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
 
     # array to hold results in
     mf_mc = np.ones((rdn.shape[0],args.n_mc)) * args.nodata_value
+    uncert_mc = np.ones((rdn.shape[0],args.n_mc)) * args.nodata_value
 
     if args.n_mc != 1:
         raise ValueError('This injection code only works for n_mc == 1!')
 
     if injection_absorption_spectrum is not None:
-        l_hat_slope_mc = np.ones((rdn.shape[0])) * args.nodata_value
+        l_hat_slope_mc = np.ones((rdn.shape[0], args.n_mc)) * args.nodata_value
         #before_sum = np.ones((rdn.shape[0], rdn.shape[1])) * args.nodata_value
         #injected_before_sum = np.ones((rdn.shape[0], rdn.shape[1])) * args.nodata_value
         #rdn_injected = rdn * injection_absorption_spectrum
@@ -501,22 +513,24 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
         mf_before_sum = ((loc_rdn[no_radiance_mask, :] - mu).dot(Cinv)) / normalizer
         mf = np.sum(mf_before_sum * target.T, axis = 1)
 
-        a_times_X = absorption_coefficients.copy() * loc_rdn[no_radiance_mask, :]
-        MF_slope = ((a_times_X).dot(Cinv).dot(target.T))
-        l_hat_slope = MF_slope / normalizer
-
         #if injection_absorption_spectrum is not None:
         #    normalizer_injected = normalizer
 
         #    mf_injected_before_sum = ((rdn_injected[no_radiance_mask,:] - mu).dot(Cinv)) / normalizer_injected
         #    mf_injected = np.sum(mf_injected_before_sum * target.T, axis = 1)
+
+        a_times_X = absorption_coefficients.copy() * loc_rdn[no_radiance_mask, :]
+        MF_slope = ((a_times_X).dot(Cinv).dot(target.T))
+        l_hat_slope = MF_slope / normalizer
+        uncert = np.sqrt(normalizer) / np.abs(MF_slope) # Std. dev. of concentration length
         
         # scale outputs
         mf_mc[no_radiance_mask,_mc] = mf * args.ppm_scaling
+        uncert_mc[no_radiance_mask,_mc] = uncert * args.ppm_scaling
 
         #injected_mf[no_radiance_mask] = mf_injected * args.ppm_scaling
         #injected_mf[no_radiance_mask] = MF_slope / args.ppm_scaling
-        l_hat_slope_mc[no_radiance_mask] = l_hat_slope
+        l_hat_slope_mc[no_radiance_mask, _mc] = l_hat_slope
         #injected_mf[no_radiance_mask] = uncert / args.ppm_scaling
         #before_sum[no_radiance_mask, :] = mf_before_sum * args.ppm_scaling
         #injected_before_sum[no_radiance_mask, :] = mf_injected_before_sum * args.ppm_scaling
@@ -524,8 +538,15 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
     output = np.vstack([np.mean(mf_mc,axis=-1), np.std(mf_mc,axis=-1)]).T
     output[np.logical_not(no_radiance_mask),:] = args.nodata_value
 
+    uncert = uncert_mc[:,0]
+    uncert[np.logical_not(no_radiance_mask)] = args.nodata_value
+    uncert[np.logical_not(np.isfinite(uncert))] = args.nodata_value
+
+    l_hat_slope = l_hat_slope_mc[:,0]
+    l_hat_slope[np.logical_not(no_radiance_mask)] = args.nodata_value
+
     logging.debug(f'Column {col} mean: {np.mean(output[good_pixel_idx,0])}')
-    return output.astype(np.float32), col, l_hat_slope_mc #, before_sum, injected_before_sum
+    return output.astype(np.float32), col, uncert, l_hat_slope
 
 
 if __name__ == '__main__':

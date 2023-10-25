@@ -75,6 +75,8 @@ def main(input_args=None):
     #ch4_mf_before_sum_file = f'{args.output_base}_ch4_mf_before_sum'
     #ch4_injected_mf_before_sum_file = f'{args.output_base}_injected_ch4_mf_before_sum'
 
+    ch4_mf_uncert_file = f'{args.output_base}_ch4_mf_uncert'
+
     # Flares
     flare_file = f'{args.output_base}_flares.json'
 
@@ -158,7 +160,7 @@ def main(input_args=None):
     
     if os.path.isfile(ch4_mf_file) is False or args.overwrite:
         logging.info('starting parallel mf')
-        subargs = [args.radiance_file, ch4_target_file, ch4_mf_file, '--n_mc', '1', '--l1b_bandmask_file', args.l1b_bandmask_file, '--l2a_mask_file', args.l2a_mask_file, '--wavelength_range', '500', '2450', '--fixed_alpha', '0.0000000001', '--mask_clouds_water', '--mask_flares', '--flare_outfile', flare_file,
+        subargs = [args.radiance_file, ch4_target_file, ch4_mf_file, ch4_mf_uncert_file, '--n_mc', '1', '--l1b_bandmask_file', args.l1b_bandmask_file, '--l2a_mask_file', args.l2a_mask_file, '--wavelength_range', '500', '2450', '--fixed_alpha', '0.0000000001', '--mask_clouds_water', '--mask_flares', '--flare_outfile', flare_file,
                    '--do_injection_CH4_npy_filename', '/beegfs/scratch/jfahlen/methane_absorption_spectrum_emit_1500ppmm.npy',
                    f'--do_l_hat_slope_filename', f'{ch4_l_hat_slope}']
                    #f'--output_mf_before_sum_filename', f'{ch4_mf_before_sum_file}',
