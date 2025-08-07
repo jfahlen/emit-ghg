@@ -454,7 +454,26 @@ def mf_full_scene(rdn_full, absorption_coefficients, active_wl_idx, good_pixel_m
         normalizer = target.dot(Cinv).dot(target.T)
 
         # Matched filter
+        mf_col = target.T.dot(Cinv).dot((rdn_col - mu).T) / normalizer
+
+        # Recalculate matched filter for elements less than 95th percentile
+        mf_threshold = np.percentile(mf_col, 95)
+        idx = np.where(mf_col[good_pixel_idx] < mf_threshold)[0]
+        try:
+            C = calculate_mf_covariance(rdn_col[good_pixel_idx[idx],:], args.covariance_style, args.fixed_alpha)
+            Cinv = scipy.linalg.inv(C, check_finite=False)
+        except np.linalg.LinAlgError:
+            logging.warn('singular matrix in second calculation. skipping this column')
+            continue
+        mu = np.mean(rdn_col[good_pixel_idx[idx],:], axis=0)
+
+        target = absorption_coefficients * mu
+
+        normalizer = target.dot(Cinv).dot(target.T)
+
+        # Matched filter
         mf_col = target.T.dot(Cinv).dot((rdn_col[no_radiance_mask,:] - mu).T) / normalizer
+
         mf[no_radiance_mask,col] = mf_col * args.ppm_scaling
 
         if args.uncert_output_file is not None:
