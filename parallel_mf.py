@@ -441,6 +441,7 @@ def mf_full_scene(rdn_full, absorption_coefficients, active_wl_idx, good_pixel_m
         if args.uncert_output_file is not None:
             nedl_variance = (get_noise_equivalent_spectral_radiance(noise_model_parameters, rdn_col))**2
     
+        # Run matched filter once
         try:
             C = calculate_mf_covariance(rdn_col[good_pixel_idx,:], args.covariance_style, args.fixed_alpha)
             Cinv = scipy.linalg.inv(C, check_finite=False)
@@ -448,12 +449,8 @@ def mf_full_scene(rdn_full, absorption_coefficients, active_wl_idx, good_pixel_m
             logging.warn('singular matrix. skipping this column')
             continue
         mu = np.mean(rdn_col[good_pixel_idx,:], axis=0)
-
         target = absorption_coefficients * mu
-
         normalizer = target.dot(Cinv).dot(target.T)
-
-        # Matched filter
         mf_col = target.T.dot(Cinv).dot((rdn_col - mu).T) / normalizer
 
         # Recalculate matched filter for elements less than 95th percentile
@@ -466,12 +463,8 @@ def mf_full_scene(rdn_full, absorption_coefficients, active_wl_idx, good_pixel_m
             logging.warn('singular matrix in second calculation. skipping this column')
             continue
         mu = np.mean(rdn_col[good_pixel_idx[idx],:], axis=0)
-
         target = absorption_coefficients * mu
-
         normalizer = target.dot(Cinv).dot(target.T)
-
-        # Matched filter
         mf_col = target.T.dot(Cinv).dot((rdn_col[no_radiance_mask,:] - mu).T) / normalizer
 
         mf[no_radiance_mask,col] = mf_col * args.ppm_scaling
