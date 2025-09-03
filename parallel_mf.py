@@ -31,6 +31,7 @@ import numpy as np
 from utils import envi_header, write_bil_chunk
 import json
 from utils import SerialEncoder
+from time import time
 
 import logging
 import os
@@ -210,12 +211,18 @@ def main(input_args=None):
 
         logging.info('initializing ray, adding data to shared memory')
 
-        rdn_id = ray.put(radiance)
+        rad_for_mf = np.ascontiguousarray(np.float64(radiance[:,active_wl_idx,:].transpose([2,0,1])))
+        rdn_id = ray.put(rad_for_mf)
         del radiance
+        good_pixel_mask_for_mf = np.ascontiguousarray(good_pixel_mask.T)
+
+        good_pixel_mask_id = ray.put(good_pixel_mask_for_mf)
 
         logging.info('Run jobs')
-        jobs = [mf_one_column.remote(col, rdn_id, absorption_coefficients_id, active_wl_idx, good_pixel_mask, noise_model_parameters_id, args) for col in range(output_shape[2])]
+        start_time = time()
+        jobs = [mf_one_column.remote(col, rdn_id, absorption_coefficients_id, active_wl_idx, good_pixel_mask_id, noise_model_parameters_id, args) for col in range(output_shape[2])]
         rreturn = [ray.get(jid) for jid in jobs]
+        print(time()-start_time)
 
         logging.info('Collecting and writing output')
         output_dat = np.zeros(chunk_shape,dtype=np.float32)
@@ -475,9 +482,9 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
                         filename=args.logfile, datefmt='%Y-%m-%d,%H:%M:%S')
     logging.debug(f'Col: {col}')
 
-    rdn = np.float64(rdn_full[:, active_wl_idx, col].copy())
+    rdn = rdn_full[col,:,:]
     no_radiance_mask = np.all(np.logical_and(np.isfinite(rdn), rdn > -0.05), axis=1)
-    good_pixel_idx = np.where(np.logical_and(good_pixel_mask[:,col], no_radiance_mask))[0]
+    good_pixel_idx = np.where(np.logical_and(good_pixel_mask[col,:], no_radiance_mask))[0]
     if len(good_pixel_idx) < 10:
         logging.debug('Too few good pixels found in col {col}: skipping')
         return None, None
