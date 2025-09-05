@@ -69,6 +69,7 @@ def main(input_args=None):
     parser.add_argument('--uncert_output_file', type=str,  metavar='OUTPUT', help='path for uncertainty output image (mf ch4 ppm)')    
     parser.add_argument('--sens_output_file', type=str,  metavar='OUTPUT', help='path for sensitivity output image (mf ch4 ppm)')    
     parser.add_argument('--noise_parameters_file', type=str, default=None, help='Mandatory input to produce uncertainty metric. EMIT file found here: https://github.com/isofit/isofit/blob/dev/data/emit_noise.txt')         
+    parser.add_argument('--mf_second_round_threshold_ppmm', type=float, default=None, help='The maximum first round MF value used in mean and cov for the second round MF')         
     args = parser.parse_args(input_args)
 
     if (args.uncert_output_file is not None and args.sens_output_file is None) or \
@@ -475,6 +476,24 @@ def mf_full_scene(rdn, absorption_coefficients, good_pixel_mask, noise_model_par
         normalizer = target.dot(Cinv).dot(target.T)
 
         # Matched filter
+        mf_col = target.T.dot(Cinv).dot((rdn_col - mu).T) / normalizer
+
+        if args.mf_second_round_threshold_ppmm is not None:
+            # Recalculate matched filter for elements less than 95th percentile
+            idx = np.where(mf_col[good_pixel_idx] < args.mf_second_round_threshold_ppmm/args.ppm_scaling)[0]
+            try:
+                C = calculate_mf_covariance(rdn_col[good_pixel_idx[idx],:], args.covariance_style, args.fixed_alpha)
+                Cinv = scipy.linalg.inv(C, check_finite=False)
+            except np.linalg.LinAlgError:
+                logging.warn('singular matrix in second calculation. skipping this column')
+                continue
+            mu = np.mean(rdn_col[good_pixel_idx[idx],:], axis=0)
+            target = absorption_coefficients * mu
+            normalizer = target.dot(Cinv).dot(target.T)
+            mf_col = target.T.dot(Cinv).dot((rdn_col[no_radiance_mask,:] - mu).T) / normalizer
+        else:
+            mf_col = mf_col[no_radiance_mask]
+
         mf_col = target.T.dot(Cinv).dot((rdn_col[no_radiance_mask,:] - mu).T) / normalizer
         mf[col, no_radiance_mask] = mf_col * args.ppm_scaling
 

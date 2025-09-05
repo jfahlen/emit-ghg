@@ -163,7 +163,8 @@ def main(input_args=None):
                    '--flare_outfile', files.flare_file,
                    '--noise_parameters_file', args.noise_file,
                    '--sens_output_file', files.mf_sens_file,
-                   '--uncert_output_file', files.mf_uncert_file]
+                   '--uncert_output_file', files.mf_uncert_file,
+                   '--mf_second_round_threshold_ppmm', '2000.0']
 
         if args.wavelength_range is not None:
             subargs.extend(['--wavelength_range'] + [str(val) for val in args.wavelength_range])
