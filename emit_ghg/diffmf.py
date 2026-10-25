@@ -230,7 +230,10 @@ def main(input_args=None):
         logging.debug("adding cloud / water mask")
         clouds_and_surface_water_mask = None
         if args.l2a_mask_file is not None:
-            mask_ds = envi.open(envi_header(args.l2a_mask_file)).open_memmap(interleave='bip')
+            if args.l2a_mask_file.endswith('.nc'):
+                _, mask_ds = ncio.open_netcdf_l2a_mask(args.l2a_mask_file, mask_type='mask')
+            else:
+                mask_ds = envi.open(envi_header(args.l2a_mask_file)).open_memmap(interleave='bip')
             # 0 = trad cloud, 1 = trad cirrus, 2 = water, 5 = specTF cloud, 6 = spectf buff (9 and 10 in V002 mask)
 
             water_mask = mask_ds[ce:chunk_edges[_ce+1],:,2] > 0
@@ -468,10 +471,15 @@ def calculate_saturation_mask(bandmask_file: str, radiance: np.array, dilation_i
     has been otherwise flagged with bad values (-9999). The bad9999 mask identifies these and
     excludes them.'''
 
-    if chunk_edges is None:
-        l1b_bandmask_loaded = envi.open(envi_header(bandmask_file))[:,:,:]
+    if bandmask_file.endswith('.nc'):
+        _, l1b_bandmask_loaded = ncio.open_emit_l2a_mask_nc(bandmask_file, mask_type='band_mask')
     else:
-        l1b_bandmask_loaded = envi.open(envi_header(bandmask_file))[chunk_edges[0]:chunk_edges[1],:,:]
+        l1b_bandmask_loaded = envi.open(envi_header(bandmask_file))
+
+    if chunk_edges is None:
+        l1b_bandmask_loaded = l1b_bandmask_loaded[:,:,:]
+    else:
+        l1b_bandmask_loaded = l1b_bandmask_loaded[chunk_edges[0]:chunk_edges[1],:,:]
 
     bad9999 = np.any(radiance < -1, axis = 1)
     l1b_bandmask_unpacked = np.unpackbits(l1b_bandmask_loaded, axis= -1)

@@ -25,6 +25,7 @@ import argparse
 import spectral
 import h5py
 
+from emit_ghg import ncio
 
 def check_param(value, min, max, name):
     if value < min or value > max:
@@ -253,9 +254,16 @@ def main(input_args=None):
              'water': args.water_vapor,
              'order': args.order}
     if args.hdr and exists(args.hdr):
-        image = spectral.io.envi.open(args.hdr)
-        centers = np.array([float(x) for x in image.metadata['wavelength']])
-        fwhm = np.array([float(x) for x in image.metadata['fwhm']])
+        if args.hdr.endswith('.nc'):
+            m, _ = ncio.open_netcdf_radiance(args.hdr, meta_only=True)
+            centers = m.wavelengths
+            fwhm = m.fwhm
+        elif args.hdr.endswith('.hdr'):
+            image = spectral.io.envi.open(args.hdr)
+            centers = np.array([float(x) for x in image.metadata['wavelength']])
+            fwhm = np.array([float(x) for x in image.metadata['fwhm']])
+        else:
+            raise IOError(f'Unknown file format in target_generation: args.hdr is {args.hdr}')
     elif args.txt and exists(args.txt):
         data = np.loadtxt(args.txt, usecols=(0, 1),delimiter=',')
         centers = data[:, 0]
