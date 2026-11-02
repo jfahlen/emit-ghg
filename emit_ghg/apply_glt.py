@@ -23,6 +23,8 @@ from spectral.io import envi
 
 from emit_ghg.utils import write_bil_chunk,envi_header
 
+from emit_ghg import ncio
+
 def single_image_ortho(img_dat, in_glt, glt_nodata_value=0):
     """Orthorectify a single image
     Args:
@@ -32,7 +34,7 @@ def single_image_ortho(img_dat, in_glt, glt_nodata_value=0):
     Returns:
         array like: orthorectified version of img_dat
     """
-    glt = in_glt.copy()
+    glt = np.abs(in_glt.copy())
     outdat = np.zeros((glt.shape[0], glt.shape[1], img_dat.shape[-1])) - 9999
     valid_glt = np.all(glt != glt_nodata_value, axis=-1)
     glt[valid_glt] -= 1 # account for 1-based indexing
@@ -48,10 +50,21 @@ def main(input_args=None):
     args = parser.parse_args(input_args)
 
 
-    glt_dataset = envi.open(envi_header(args.glt_file))
-    glt = glt_dataset.open_memmap(writeable=False, interleave='bip').copy()
-    del glt_dataset
-    glt_dataset = gdal.Open(args.glt_file)
+    if args.glt_file.endswith('.nc'):
+        if 'AV3' in args.glt_file:
+            m, _ = ncio.open_airborne_obs(args.glt_file, load_glt=True)
+            glt = m.glt
+            proj = m.projection
+            trans = m.geotransform
+    else:
+        glt_dataset = envi.open(envi_header(args.glt_file))
+        glt = glt_dataset.open_memmap(writeable=False, interleave='bip').copy()
+        del glt_dataset
+        glt_dataset = gdal.Open(args.glt_file)
+        proj = glt_dataset.GetProjection()
+        trans = glt_dataset.GetGeoTransform()
+
+    print(f'bbbbbbbbbbb {glt.shape}, {glt.dtype}')
 
     img_ds = envi.open(envi_header(args.raw_file))
     img_dat = img_ds.open_memmap(writeable=False, interleave='bip').copy()
@@ -70,8 +83,8 @@ def main(input_args=None):
     #TODO: careful about output datatypes / format
     outDataset = driver.Create(args.out_file, glt.shape[1], glt.shape[0],
                                ort_img.shape[-1], gdal.GDT_Float32, options=['INTERLEAVE=BIL'])
-    outDataset.SetProjection(glt_dataset.GetProjection())
-    outDataset.SetGeoTransform(glt_dataset.GetGeoTransform())
+    outDataset.SetProjection(proj)
+    outDataset.SetGeoTransform(trans)
     for _b in range(1, ort_img.shape[-1]+1):
         outDataset.GetRasterBand(_b).SetNoDataValue(-9999)
         if band_names is not None:

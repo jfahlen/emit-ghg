@@ -28,6 +28,7 @@ from emit_ghg.utils import envi_header, convert_to_cog
 from emit_ghg.files import Filenames
 from spectral.io import envi
 import numpy as np
+import netCDF4 as nc
 
 metadata = {
     'ch4': {
@@ -118,6 +119,8 @@ def main(input_args=None):
     radiance_file = args.radiance_file
     radiance_file_hdr = envi_header(radiance_file)
 
+    band_centers_and_fwhm_file = radiance_file if radiance_file.endswith('.nc') else radiance_file_hdr
+
     obs_file = args.obs_file
     obs_file_hdr = envi_header(obs_file)
 
@@ -139,21 +142,40 @@ def main(input_args=None):
 
 
     if os.path.isfile(files.target_file) is False or args.overwrite:
-        sza = envi.open(obs_file_hdr).open_memmap(interleave='bip')[...,4]
+        if obs_file.endswith('.nc'):
+            ds = nc.Dataset(obs_file)
+            sza = ds['observation_parameters']['to_sun_zenith'][...]
+            ds.close()
+        else:
+            sza = envi.open(obs_file_hdr).open_memmap(interleave='bip')[...,4]
         mean_sza = np.mean(sza[sza != -9999])
 
-        elevation = envi.open(loc_file_hdr).open_memmap(interleave='bip')[...,2]
+
+        if loc_file.endswith('.nc'):
+            ds = nc.Dataset(loc_file)
+            #elevation = ds['location']['elev'][...]
+            elevation = ds['elev'][...]
+            ds.close()
+        else:
+            elevation = envi.open(loc_file_hdr).open_memmap(interleave='bip')[...,2]
         mean_elevation = np.mean(elevation[elevation != -9999]) / 1000.
         mean_elevation = min(max(0, mean_elevation),3)
 
         if args.state_subs is not None:
-            state_ds = envi.open(envi_header(args.state_subs))
-            band_names = state_ds.metadata['band names']
-            h2o = state_ds.open_memmap(interleave='bip')[...,band_names.index('H2OSTR')]
+            if args.state_subs.endswith('.nc'):
+                ds = nc.Dataset(args.state_subs)
+                mask_names = list(ds['sensor_band_parameters']['mask_bands'][...])
+                mask = np.array(ds['mask'][...])
+                ind = mask_names.band_names.index('H2O (g cm-2)')
+                h2o = mask[:,:,ind]
+            else:
+                state_ds = envi.open(envi_header(args.state_subs))
+                band_names = state_ds.metadata['band names']
+                h2o = state_ds.open_memmap(interleave='bip')[...,band_names.index('H2OSTR')]
             mean_h2o = np.mean(h2o[h2o != -9999])
         else:
             # Just guess something...
-            exit()
+            #exit()
             mean_h2o = 1.3
 
     gas = 'ch4'
@@ -167,7 +189,7 @@ def main(input_args=None):
                          '-g', str(mean_elevation),
                          '-w', str(mean_h2o),
                          '--output', files.target_file,
-                         '--hdr', radiance_file_hdr,
+                         '--hdr', band_centers_and_fwhm_file,
                          '--lut_dataset', args.lut_file]
         if args.co2:
             target_params.append('--co2')

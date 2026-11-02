@@ -108,7 +108,7 @@ def open_airborne_rdn(input_file, meta_only=False):
     if meta_only:
         rdn = None
     else:
-        rdn = np.transpose(ds['radiance']['radiance'][:], (1, 2, 0))
+        rdn = np.transpose(ds['radiance']['radiance'][:], (1, 0, 2))
 
     meta = SpectralMetadata(wl, fwhm)
 
@@ -193,3 +193,59 @@ def open_emit_l2a_mask_nc(input_file, mask_type, lazy=True, load_glt=False, load
     meta = GenericGeoMetadata(mask_names, trans, proj, glt=glt, pre_orthod=True, nodata_value=nodata_value, loc=loc)
 
     return meta, mask
+
+def open_av3_bandmask_nc(input_file, lazy=True, load_glt=False, load_loc=False):
+    """
+    Opens an AV3 L2A_MASK NetCDF file and extracts the spectral metadata and mask data.
+
+    Args:
+        input_file (str): Path to the NetCDF file.
+        lazy (bool, optional): Ignored
+
+    Returns:
+        tuple: A tuple containing:
+            - GenericGeoMetadata: An object containing the band names
+            - numpy.ndarray or netCDF4.Variable: The mask data
+    """
+    ds = nc.Dataset(input_file)
+
+    nodata_value = float(ds['band_mask']._FillValue)
+
+    mask = np.array(ds['band_mask'][...])
+    
+    meta = GenericGeoMetadata(None, None, None, glt=None, pre_orthod=True, nodata_value=nodata_value, loc=None)
+
+    return meta, mask.transpose([1,2,0])
+
+def open_airborne_obs(input_file, lazy=True, load_glt=False, load_loc=False):
+    """
+    Opens an Airborne observation NetCDF file and extracts the spectral metadata and obs data.
+
+    Args:
+        input_file (str): Path to the NetCDF file.
+        lazy (bool, optional): If True, loads the radiance data lazily. Defaults to True.
+
+    Returns:
+        tuple: A tuple containing:
+            - SpectralMetadata: An object containing the wavelengths and FWHM.
+            - numpy.ndarray or netCDF4.Variable: The radiance data, either as a lazy-loaded variable or a fully loaded numpy array.
+    """
+    ds = nc.Dataset(input_file)
+    proj = ds.variables['transverse_mercator'].spatial_ref
+    trans = [float(x) for x in ds.variables['transverse_mercator'].GeoTransform.split(' ')]
+
+    obs_names = list(ds['observation_parameters'].variables.keys())
+
+    nodata_value = float(ds['observation_parameters'][obs_names[0]]._FillValue)
+    glt = None
+    if load_glt:
+        glt = np.stack([ds['geolocation_lookup_table']['sample'][:],ds['geolocation_lookup_table']['line'][:]],axis=-1).astype(int)
+    loc = None
+    if load_loc:
+        loc = np.stack([ds['lon'][:],ds['lat'][:]],axis=-1)
+
+    obs = np.stack([ds['observation_parameters'][on] for on in obs_names], axis=-1)
+    
+    meta = GenericGeoMetadata(obs_names, trans, proj, glt=glt, pre_orthod=True, nodata_value=nodata_value, loc=loc)
+
+    return meta, obs

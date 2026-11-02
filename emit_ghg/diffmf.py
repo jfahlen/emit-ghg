@@ -40,6 +40,8 @@ from emit_ghg.utils import SerialEncoder
 import logging
 import os
 
+import pdb
+
 from scipy.signal import savgol_filter
 
 
@@ -472,10 +474,16 @@ def calculate_saturation_mask(bandmask_file: str, radiance: np.array, dilation_i
     excludes them.'''
 
     if bandmask_file.endswith('.nc'):
-        _, l1b_bandmask_loaded = ncio.open_emit_l2a_mask_nc(bandmask_file, mask_type='band_mask')
+        if 'EMIT' in bandmask_file:
+            _, l1b_bandmask_loaded = ncio.open_emit_l2a_mask_nc(bandmask_file, mask_type='band_mask')
+        elif 'AV3' in bandmask_file:
+            _, l1b_bandmask_loaded = ncio.open_av3_bandmask_nc(bandmask_file)
+        else:
+            raise IOError(f'Cannot open {bandmask_file}.')
     else:
         l1b_bandmask_loaded = envi.open(envi_header(bandmask_file))
 
+    print(f'aaaaaaaaaaa {l1b_bandmask_loaded.shape}, {radiance.shape}')
     if chunk_edges is None:
         l1b_bandmask_loaded = l1b_bandmask_loaded[:,:,:]
     else:

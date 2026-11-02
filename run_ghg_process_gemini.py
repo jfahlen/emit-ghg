@@ -12,7 +12,7 @@ import pdb
 CONDA_ENV = "conda activate emit-ghg; export OMP_NUM_THREADS=1; export MKL_NUM_THREADS=1; export PYTHONPATH=~/src/py_tools:~/src/py_tools/emit/:~/src/plume_emission_rate:~/src/hapi/:~/src/SpectralUtil/spectral_util/;"
 EMIT_OPS_BASE = "/store/emit/ops/data/acquisitions"
 KURUCZ_FILE = "/store/airborne/software/asds_data/main/l1b_rdn/kurucz_0.1nm.dat"
-NOISE_FILE_AV3 = "/home/jfahlen/src/emit-ghg/instrument_noise_parameters/AV320250715t180536_001_L1B_RDN_76a54582_NOISE.txt"
+NOISE_FILE_AV3 = "/home/jfahlen/src/emit-ghg/emit_ghg/data/instrument_noise_parameters/AV320250715t180536_001_L1B_RDN_76a54582_NOISE.txt"
 
 def submit_job(fid, python_commands, output_dir, execute, cmd_type='srun', cores="1", mem="30G"):
     """Wraps and submits the python command(s) via srun or sbatch."""
@@ -147,16 +147,20 @@ def run_ghg_process_AV3_DAAC(fid, input_path, output_dir, wavelength_range, exec
     ]
 
     ghg_process_command = [
-        "python", "ghg_process.py",
+        "python", "deploy/ghg_process.py",
         l1b_rdn_file, json_file_list['OBS'],
         l1b_rdn_file, json_file_list['OBS'],
         json_file_list['BANDMASK'], l1b_mask_filename,
-        output_dir,
-        "--wavelength_range"
-    ] + [str(int(w)) for w in wavelength_range] + [
+        os.path.join(output_dir, fid)
+    ]
+
+    if len(wavelength_range) > 0:
+        ghg_process_command.extend("--wavelength_range", [str(int(w)) for w in wavelength_range])
+
+    ghg_process_command.extend([
         "--overwrite",
         '--noise_file', NOISE_FILE_AV3
-    ]
+    ])
 
     submit_job(fid, [l1b_mask_command, ghg_process_command], output_dir, execute, cmd_type=cmd, cores="64", mem="300G")
 
@@ -178,7 +182,7 @@ if __name__ == "__main__":
     parser_av3.add_argument("fid", help="The case prefix (e.g., AV320240914t203535)")
     parser_av3.add_argument("input_path", help="Path to the input data granule")
     parser_av3.add_argument("output_dir", help="The output directory")
-    parser_av3.add_argument("--wavelengths", type=float, nargs="+", help="One or more min max pairs")
+    parser_av3.add_argument("--wavelengths", type=float, nargs="+", default=[], help="One or more min max pairs",)
     parser_av3.add_argument("--execute", action="store_true", help="Execute the command")
 
     parser_emit_daac = subparsers.add_parser("EMIT_DAAC", help="Run EMIT DAAC processing")
